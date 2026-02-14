@@ -815,120 +815,100 @@ plt.tight_layout()
 save_fig("Fig12_event_day_boxplot")
 plt.show()
 
-"""### Purpose of Event-Day Comparison:
-Events may shift complaint behavior (crowds, noise, transportation disruption).  
-We compare event vs non-event days descriptively and then quantify uncertainty with a t-test.
-
-### Interpretation:
-- Citywide average total on event days ≈ 8,164 vs non-event days ≈ 8,960 (-8.9% difference).  
-- Welch t-test on borough-day complaints gives p = 0.2365, so we do not find strong evidence of a mean shift at this aggregation level.
-- This motivates interaction features (e.g., event × weekend, event × temperature) and potentially borough-specific event effects.
 
 #### 4.4.2 Weather effects (weather relationships)
-"""
 
-#title: EDA - Weather Relationships
 # =====================
 # 11) EDA — weather relationships (Task 3)
 # =====================
 
-# Citywide daily aggregates (to avoid borough scale differences dominating correlations)
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
+
+# Citywide daily aggregates (avoid borough scale differences dominating correlations)
 daily = df.groupby("date", as_index=False).agg(
     complaints_total_city=("complaints_total", "sum"),
     temp_mean=("temp_mean", "mean"),
-    temp_max=("temp_max", "mean"),
-    temp_min=("temp_min", "mean"),
     precipitation_sum=("precipitation_sum", "sum"),
-    rain_sum=("rain_sum", "sum"),
-    snowfall_sum=("snowfall_sum", "sum"),
     wind_speed_mean=("wind_speed_mean", "mean"),
-    cloud_cover_mean=("cloud_cover_mean", "mean"),
-    event_day=("event_day", "max"),
+    event_day=("event_day", "max") if "event_day" in df.columns else ("event_count", "max"),
     is_weekend=("is_weekend", "max"),
 )
 
-corr_small = daily[["complaints_total_city", "temp_mean", "precipitation_sum", "event_day", "is_weekend"]].corr()
+# Small correlation table (optional)
+corr_small = daily[["complaints_total_city", "temp_mean", "precipitation_sum", "wind_speed_mean", "event_day", "is_weekend"]].corr()
 display(corr_small)
 save_table(corr_small, "Table_citywide_weather_corr_small")
 
-# Scatter: citywide complaints vs temperature
-plt.figure(figsize=(7, 4))
-plt.scatter(
+# ---------- Helper: scatter + optional regression line ----------
+def scatter_with_stats(ax, x, y, xlabel, ylabel, title_prefix, add_fit=True):
+    # drop NaNs pairwise
+    mask = x.notna() & y.notna()
+    x_clean = x[mask].astype(float)
+    y_clean = y[mask].astype(float)
+
+    # scatter
+    ax.scatter(x_clean, y_clean, alpha=0.25, s=12)
+
+    # Pearson correlation
+    r, pval = stats.pearsonr(x_clean, y_clean)
+
+    # linear fit line
+    if add_fit:
+        z = np.polyfit(x_clean, y_clean, 1)
+        p_line = np.poly1d(z)
+        x_range = np.linspace(x_clean.min(), x_clean.max(), 100)
+        ax.plot(x_range, p_line(x_range), linewidth=2)
+
+    ax.set_title(f"{title_prefix}\n(r={r:.3f}, p={pval:.2e})", fontsize=11)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(alpha=0.25)
+
+    return r, pval
+
+# ---------- 1×3 figure ----------
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+r1, p1 = scatter_with_stats(
+    axes[0],
     daily["temp_mean"],
     daily["complaints_total_city"],
-    alpha=0.75,
-    color=DARK_BLUE,
-    edgecolor="white",
-    linewidth=0.5
+    xlabel="Mean Temperature (C)",
+    ylabel="Citywide Daily Complaints",
+    title_prefix="Temperature vs Complaints",
+    add_fit=True
 )
-plt.title("Citywide complaints vs mean temperature")
-plt.xlabel("temp_mean")
-plt.ylabel("complaints_total_city")
-plt.grid(alpha=0.25)
-plt.tight_layout()
-save_fig("Fig13_citywide_temp_vs_complaints")
-plt.show()
 
-# Scatter: citywide complaints vs precipitation
-plt.figure(figsize=(7, 4))
-plt.scatter(
+r2, p2 = scatter_with_stats(
+    axes[1],
     daily["precipitation_sum"],
     daily["complaints_total_city"],
-    alpha=0.75,
-    color=DARK_BLUE,
-    edgecolor="white",
-    linewidth=0.5
+    xlabel="Precipitation (mm)",
+    ylabel="Citywide Daily Complaints",
+    title_prefix="Precipitation vs Complaints",
+    add_fit=True
 )
-plt.title("Citywide complaints vs precipitation_sum")
-plt.xlabel("precipitation_sum")
-plt.ylabel("complaints_total_city")
-plt.grid(alpha=0.25)
+
+r3, p3 = scatter_with_stats(
+    axes[2],
+    daily["wind_speed_mean"],
+    daily["complaints_total_city"],
+    xlabel="Wind Speed (km/h)",
+    ylabel="Citywide Daily Complaints",
+    title_prefix="Wind Speed vs Complaints",
+    add_fit=True
+)
+
+plt.suptitle("Weather Variables vs 311 Complaints (Citywide Daily Aggregates)", fontsize=14, fontweight="bold")
 plt.tight_layout()
-save_fig("Fig14_citywide_precip_vs_complaints")
+
+save_fig("Fig13_citywide_weather_vs_complaints_3panels")
 plt.show()
 
-# Stronger, more domain-plausible relationship:
-# Heat/Hot Water complaints typically drop as temperature increases.
-heat_col = "topk_HEAT_HOT_WATER_cnt"
-heat_share = df[heat_col] / df["complaints_total"]
 
-print("Correlation(temp_mean, HEAT/HOT_WATER count):", round(df["temp_mean"].corr(df[heat_col]), 3))
-print("Correlation(temp_mean, HEAT/HOT_WATER share):", round(df["temp_mean"].corr(heat_share), 3))
 
-plt.figure(figsize=(7, 4))
-plt.scatter(
-    df["temp_mean"],
-    heat_share,
-    alpha=0.30,
-    color=DARK_BLUE,
-    edgecolor="white",
-    linewidth=0.2
-)
-plt.title("Heat/Hot Water share vs temp_mean (all borough-days)")
-plt.xlabel("temp_mean")
-plt.ylabel("HEAT/HOT_WATER share")
-plt.grid(alpha=0.25)
-plt.tight_layout()
-save_fig("Fig15_heat_share_vs_temp")
-plt.show()
-
-"""### Purpose of Weather Relationships:
-We explore how weather relates to complaints:
-- At the citywide level (to reduce borough scale differences)
-- And for specific complaint types where domain logic suggests strong relationships
-
-### Interpretation:
-- Citywide correlations between total complaints and weather are generally weak (complex drivers).
-- A strong, domain-plausible relationship appears for HEAT/HOT WATER complaints:
-  - Corr(temp_mean, HEAT/HOT WATER count) ≈ -0.597
-  - Corr(temp_mean, HEAT/HOT WATER share) ≈ -0.669
-
-This suggests colder weather strongly increases heating-related complaints, even if it doesn't strongly move the overall total.
-
-### 4.5 Correlation & multicollinearity diagnostics
-
-#### 4.5.1 Correlation heatmap & multicollinearity (VIF)
-"""
 
 #EDA - Correlation Heatmap & Multicollinearity (VIF)
 
