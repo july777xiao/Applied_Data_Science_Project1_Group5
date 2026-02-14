@@ -1325,7 +1325,7 @@ def safe_to_csv(df_obj: pd.DataFrame, path: str) -> str:
         base, ext = os.path.splitext(path)
         alt = base + "_v2" + ext
         df_obj.to_csv(alt, index=False)
-        print(f"⚠️ PermissionError writing {path}. Saved to {alt} instead.")
+        print(f"PermissionError writing {path}. Saved to {alt} instead.")
         return alt
 
 out_dir = "outputs_task3_task4"
@@ -1358,5 +1358,7 @@ for p in saved_paths:
 # =============================================================================
 # =============================================================================
 zip_path = make_outputs_zip("outputs_task3_task4")
-print("✅ Overleaf-ready outputs zip created:", zip_path)
+print("Overleaf-ready outputs zip created:", zip_path)
+
+
 
