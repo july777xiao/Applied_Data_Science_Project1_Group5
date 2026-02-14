@@ -1,0 +1,1690 @@
+
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from IPython.display import display
+
+#  =============================================================================
+from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# --- Global style choices (requested: darker blues) ---
+DARK_BLUE = "#003366"
+LIGHT_GRAY = "#B0B0B0"
+
+sns.set_theme(style="whitegrid", context="talk")
+plt.rcParams["figure.dpi"] = 120
+plt.rcParams["savefig.dpi"] = 300
+plt.rcParams["axes.titleweight"] = "bold"
+plt.rcParams["axes.titlesize"] = 14
+plt.rcParams["axes.labelsize"] = 12
+
+# --- Output folders (everything saved here so you can zip for Overleaf) ---
+OUTPUT_ROOT = Path("outputs_task3_task4")
+FIG_DIR = OUTPUT_ROOT / "figures"
+TABLE_DIR = OUTPUT_ROOT / "tables"
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+TABLE_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_fig(name: str, fig=None, formats=("png", "pdf")):
+    """Save the current matplotlib figure into outputs_task3_task4/figures as PNG + PDF."""
+    if fig is None:
+        fig = plt.gcf()
+    for fmt in formats:
+        fig.savefig(FIG_DIR / f"{name}.{fmt}", bbox_inches="tight")
+
+def save_table(df_in: pd.DataFrame, name: str, max_rows: int = 35, max_cols: int = 12, fontsize: int = 9):
+    """
+    Save a dataframe as:
+      - CSV (full table)
+      - LaTeX (full table, for Overleaf \input{})
+      - PNG snapshot (head, readable) for quick inclusion as an image
+    """
+    # Full exports
+    df_in.to_csv(TABLE_DIR / f"{name}.csv", index=True)
+    try:
+        df_in.to_latex(TABLE_DIR / f"{name}.tex", index=True)
+    except Exception as e:
+        print(f"[save_table] LaTeX export failed for {name}: {e}")
+
+    # PNG snapshot (head + limited columns)
+    df_show = df_in.copy()
+    if df_show.shape[0] > max_rows:
+        df_show = df_show.head(max_rows)
+    if df_show.shape[1] > max_cols:
+        df_show = df_show.iloc[:, :max_cols]
+
+    # Format numeric columns for readability
+    df_show_fmt = df_show.copy()
+    for c in df_show_fmt.columns:
+        if pd.api.types.is_numeric_dtype(df_show_fmt[c]):
+            df_show_fmt[c] = df_show_fmt[c].map(lambda x: "" if pd.isna(x) else f"{x:.3f}")
+
+    df_show_fmt = df_show_fmt.reset_index()
+
+    fig, ax = plt.subplots(figsize=(max(8, 0.8 * df_show_fmt.shape[1]), max(2.5, 0.35 * df_show_fmt.shape[0])))
+    ax.axis("off")
+
+    tbl = ax.table(
+        cellText=df_show_fmt.values,
+        colLabels=df_show_fmt.columns,
+        loc="center",
+        cellLoc="center"
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(fontsize)
+    tbl.scale(1, 1.2)
+
+    # Style header row + zebra stripes
+    for (row, col), cell in tbl.get_celld().items():
+        if row == 0:
+            cell.set_facecolor(DARK_BLUE)
+            cell.set_text_props(color="white", weight="bold")
+        else:
+            cell.set_facecolor("#F7F7F7" if row % 2 == 0 else "white")
+
+    fig.tight_layout()
+    fig.savefig(TABLE_DIR / f"{name}.png", bbox_inches="tight")
+    plt.close(fig)
+
+def make_outputs_zip(zip_name: str = "outputs_task3_task4"):
+    """Zip the entire outputs_task3_task4 folder (figures + tables + CSVs)."""
+    import shutil
+    zip_path = shutil.make_archive(zip_name, "zip", OUTPUT_ROOT)
+    print("Created zip:", zip_path)
+    return zip_path
+
+#Load Data
+pd.set_option("display.max_columns", 200)
+pd.set_option("display.width", 120)
+
+np.random.seed(42)
+
+DATA_PATH = "Daily Borough Events Panel.csv"
+
+df_raw = pd.read_csv(DATA_PATH)
+
+print("Cleaned Panel Data File:", DATA_PATH)
+print("Shape:", df_raw.shape)
+display(df_raw.head())
+
+"""## 3. Cleaning and preprocessing steps
+
+This section documents the **data integrity checks** and **basic preprocessing** needed before EDA and modeling. These checks ensure the dataset is a valid **daily × borough panel** with consistent types and reasonable values.
+
+### 3.1 Dataset overview & panel structure checks
+"""
+
+#EDA - Dataset Overview & Panel Structure Checks
+
+# 1) Dataset overview + quick structure checks
+df = df_raw.copy()
+
+# Parse date
+df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+# Standardize borough as category
+df["borough"] = df["borough"].astype("string").str.upper().str.strip()
+df["borough"] = df["borough"].astype("category")
+
+# Basic panel completeness check
+n_days = df["date"].nunique()
+n_borough = df["borough"].nunique()
+expected = n_days * n_borough
+print(f"Unique days: {n_days} | Unique boroughs: {n_borough} | Expected rows: {expected} | Actual rows: {len(df)}")
+print("Balanced panel:", expected == len(df))
+
+# Duplicate check at panel key level
+dup = df.duplicated(subset=["date","borough"]).sum()
+print("Duplicate (date, borough) rows:", dup)
+
+# Date range
+print("Date range:", df["date"].min().date(), "→", df["date"].max().date())
+
+"""### 3.2 Data dictionary"""
+
+#EDA - Auto Data Dictionary
+
+# 2) Data dictionary (auto-generated)
+def make_data_dictionary(data: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for c in data.columns:
+        s = data[c]
+        row = {
+            "column": c,
+            "dtype": str(s.dtype),
+            "missing_n": int(s.isna().sum()),
+            "missing_%": float(s.isna().mean()*100),
+            "unique_n": int(s.nunique(dropna=True)),
+        }
+        if pd.api.types.is_numeric_dtype(s):
+            row.update({
+                "mean": float(np.nanmean(s)),
+                "std": float(np.nanstd(s)),
+                "min": float(np.nanmin(s)),
+                "p25": float(np.nanpercentile(s.dropna(), 25)) if s.notna().any() else np.nan,
+                "median": float(np.nanmedian(s)),
+                "p75": float(np.nanpercentile(s.dropna(), 75)) if s.notna().any() else np.nan,
+                "max": float(np.nanmax(s)),
+            })
+        else:
+            examples = s.dropna().astype(str).unique()[:5]
+            row["examples"] = ", ".join(examples)
+        rows.append(row)
+    out = pd.DataFrame(rows).sort_values(["missing_%","unique_n"], ascending=[False, False])
+    return out
+
+dd = make_data_dictionary(df)
+display(dd.head(15))
+print("\nColumns with any missingness:")
+display(dd[dd["missing_n"]>0][["column","dtype","missing_n","missing_%"]])
+
+"""### Purpose of Data Dictionary:
+- See each column’s data type, missingness, and basic summary stats.
+- Identify which variables are numeric vs categorical.
+- Decide which columns should be grouped together for EDA and preprocessing.
+
+### Key observations from the output:
+- Missingness is very low and concentrated in lag/rolling features (structural missingness from time-series feature engineering).
+- Most variables are numeric (counts, weather, structural), with `borough` as the main categorical variable.
+
+### 3.3 Column grouping & sanity checks
+"""
+
+#EDA - Column Grouping & Sanity Checks
+
+# 3) Column groups
+id_cols = ["date", "borough"]
+
+target_cols = ["complaints_total", "log_complaints_total"]
+
+topk_cols = [c for c in df.columns if c.startswith("topk_") and c.endswith("_cnt")]
+
+weather_cols = [
+    "temp_mean", "temp_max", "temp_min",
+    "precipitation_sum", "rain_sum", "snowfall_sum",
+    "wind_speed_mean", "wind_gust_mean", "cloud_cover_mean"
+]
+
+structural_cols = [
+    "census_income_borough_median", "census_population_borough_sum",
+    "airbnb_listing_count", "airbnb_price_mean", "airbnb_price_median",
+    "airbnb_rating_mean", "airbnb_total_reviews", "airbnb_entire_home_pct",
+    "airbnb_per_1000_people_borough"
+]
+
+time_cols = ["day_of_week", "is_weekend", "month", "event_day"]
+
+lag_cols = [c for c in df.columns if c.endswith("_lag1") or c.endswith("_ma7")]
+
+other_cols = [c for c in df.columns if c not in (id_cols + topk_cols + weather_cols + structural_cols + time_cols + lag_cols + ["unique_complaints"])]
+
+print("Top-K complaint bucket columns:", len(topk_cols))
+print("Lag/Rolling columns:", len(lag_cols))
+print("Other columns:", other_cols)
+
+#Consistency checks (useful EDA sanity checks)
+
+# 1) topk buckets should partition complaints_total (since there's a topk_OTHER_cnt)
+topk_sum = df[topk_cols].sum(axis=1)
+share_ok = (topk_sum == df["complaints_total"]).mean()
+print("Share check: topk_sum == complaints_total in % of rows:", round(share_ok*100, 2), "%")
+
+# 2) unique_complaints duplicates complaints_total in this panel (it is redundant here)
+same_unique = (df["unique_complaints"] == df["complaints_total"]).mean()
+print("Check: unique_complaints == complaints_total in % of rows:", round(same_unique*100, 2), "%")
+
+"""### Purpose of Column Grouping & Sanity Checks:
+We group columns into meaningful categories (IDs, weather, structural, time, lags, Top-K complaint buckets).  
+This makes the rest of EDA + preprocessing organized and reproducible.
+
+We also run sanity checks to verify internal consistency.
+
+### Key observations from the output:
+- The Top-K complaint buckets perfectly partition the daily total: `topk_sum == complaints_total` in 100.0% of rows.
+- `unique_complaints` is redundant here: it equals `complaints_total` in 100.0% of rows.  
+  → In modeling matrices, we drop `unique_complaints` to avoid duplicate information.
+
+## 4. Exploratory Data Analysis (EDA)
+
+EDA is organized to move from **data quality** → **spatial patterns** → **temporal dynamics** → **event/environment effects** → **diagnostic checks**.
+
+### 4.1 Descriptive overview & data quality
+
+#### 4.1.1 Summary statistics
+"""
+
+#EDA - Summary Statistics
+
+# 4) EDA — summary statistics
+
+# Overall summary of key numeric variables
+key_numeric = ["complaints_total","log_complaints_total"] + weather_cols
+display(df[key_numeric].describe().T)
+
+# By-borough complaint summary (mean/median/min/max)
+borough_summary = (
+    df.groupby("borough")["complaints_total"]
+      .agg(["count","mean","median","min","max","sum"])
+      .sort_values("mean", ascending=False)
+)
+display(borough_summary)
+
+"""### Purpose of Summary Statistics:
+It is helpful to understand: Typical complaint volumes and variability, Borough-level differences (scale effects), and Weather ranges (temperature, precipitation)
+
+### Key observations from the output:
+- Borough average complaint volume (mean):
+  - **BROOKLYN:** 2766.5  
+  - **QUEENS:** 2181.9  
+  - **MANHATTAN:** 1906.9  
+  - **BRONX:** 1752.2  
+  - **STATEN ISLAND:** 314.4  
+- The borough scale differences are large, so EDA compares both later:
+  - **raw totals** (important for workload/operations)
+  - **per-capita rates** (fairer comparison across population sizes)
+
+#### 4.1.2 Missingness patterns
+"""
+
+#EDA - Missingness Patterns
+
+# 5) EDA — missingness patterns
+miss = df.isna().mean().sort_values(ascending=False)
+miss_tbl = miss[miss > 0].to_frame("missing_rate")
+display(miss_tbl)
+
+# Save missingness table for Overleaf
+if len(miss_tbl) > 0:
+    save_table(miss_tbl, "Table_missingness_rates")
+
+# Missingness heatmap
+# In this dataset, missingness is mainly structural from lag/rolling features at the start of each borough series.
+mask = df.isna().to_numpy().astype(int)
+
+plt.figure(figsize=(12, 4))
+plt.imshow(mask, aspect="auto", interpolation="nearest", cmap="Blues")
+plt.title("Missingness heatmap (1 = missing)")
+plt.xlabel("Columns (in df order)")
+plt.ylabel("Rows")
+plt.colorbar()
+plt.tight_layout()
+save_fig("Fig00_missingness_heatmap")
+plt.show()
+
+"""### Purpose of Missingness Patterns:
+Missing values can distort EDA and downstream feature engineering. We visualize missingness patterns and quantify missing rates.
+
+### Interpretation:
+- Missingness is concentrated in lag / rolling features created from time-series transforms:
+  - `complaints_total_ma7`, `temp_mean_ma7`, `precipitation_sum_ma7` each have about 1.19% missingness (expected at the start of the series).
+  - `temp_mean_lag1` and `precipitation_sum_lag1` each have about 0.60% missingness (the first day per borough).
+- Most “source” variables (complaint counts, weather, census, Airbnb) are complete, so our missingness is largely structural, not due to data loss.
+
+#### 4.1.3 Citywide anomaly detection (robust Z-score)
+"""
+
+#EDA - Citywide Anomaly Detection (Robust Z-score)
+
+# Citywide total complaints per day
+daily_city = df.groupby("date")["complaints_total"].sum().sort_index()
+
+median = daily_city.median()
+mad = np.median(np.abs(daily_city - median))
+robust_z = 0.6745 * (daily_city - median) / (mad if mad != 0 else 1)
+
+quality_by_date = (
+    pd.DataFrame({
+        "date": daily_city.index,
+        "citywide_complaints_total": daily_city.values,
+        "citywide_robust_z": robust_z.values,
+    })
+    .sort_values("date")
+    .reset_index(drop=True)
+)
+
+# Robust outlier flags (|robust_z| > 3.5 is a common MAD-based rule of thumb)
+quality_by_date["is_outlier_citywide"] = (quality_by_date["citywide_robust_z"].abs() > 3.5).astype(int)
+quality_by_date["is_outlier_low_citywide"] = (quality_by_date["citywide_robust_z"] < -3.5).astype(int)
+quality_by_date["is_outlier_high_citywide"] = (quality_by_date["citywide_robust_z"] > 3.5).astype(int)
+
+outlier_df = quality_by_date[quality_by_date["is_outlier_citywide"] == 1].copy()
+
+print("Outlier dates (robust z-score):")
+display(outlier_df)
+
+# Save the outlier table (CSV + LaTeX + PNG snapshot)
+if len(outlier_df) > 0:
+    save_table(outlier_df.set_index("date"), "Table_citywide_outliers_robust_z")
+
+# Plot (requested: make blues darker + save figure for Overleaf)
+plt.figure(figsize=(12, 4))
+plt.plot(
+    quality_by_date["date"],
+    quality_by_date["citywide_complaints_total"],
+    color=DARK_BLUE,
+    linewidth=2,
+    label="Citywide total"
+)
+
+if len(outlier_df) > 0:
+    plt.scatter(
+        outlier_df["date"],
+        outlier_df["citywide_complaints_total"],
+        color="orange",
+        edgecolor="white",
+        s=80,
+        label="Robust outlier"
+    )
+
+plt.title("Citywide daily complaints_total (robust outliers highlighted)")
+plt.xlabel("Date")
+plt.ylabel("Citywide complaints_total")
+plt.legend()
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig01_citywide_anomaly_robust_z")
+plt.show()
+
+"""### Purpose of Citywide Anomaly Detection:
+We detect unusual citywide days using a robust statistic (median + MAD).  
+This is useful because:
+- Some anomalies are real-world events (storms, system issues, policy changes)
+- Some anomalies are data pipeline problems (partial downloads, missing time windows)
+
+### Interpretation:
+Using a robust z-score threshold (|z| > 3.5), we observe 2 outlier dates:
+
+- **2024-04-15**: citywide total = 15885, robust z = 5.96
+- **2024-06-16**: citywide total = 1536, robust z = -6.49
+
+- The very low total on 2024-06-16 is far below even typical weekends, suggesting a possible partial day / truncated acquisition (e.g., API record limit).  
+- The very high total on 2024-04-15 might be a real spike, but it is still worth investigating (news/events, system changes, or weather).
+
+### 4.2 Spatial & distribution patterns
+
+#### 4.2.1 Distributions & outliers
+"""
+
+#EDA - Distributions & Potential Outliers
+
+# 7) EDA — distributions & potential outliers
+# (Requested: make the default blue visuals darker + save figures for Overleaf)
+
+# Histogram: raw complaints_total
+plt.figure(figsize=(10, 4))
+plt.hist(df["complaints_total"], bins=30, color=DARK_BLUE, edgecolor="white")
+plt.title("Distribution of complaints_total (all borough-days)")
+plt.xlabel("complaints_total")
+plt.ylabel("Frequency")
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig02_hist_complaints_total")
+plt.show()
+
+# Histogram: log1p-transformed target
+plt.figure(figsize=(10, 4))
+plt.hist(df["log_complaints_total"], bins=30, color=DARK_BLUE, edgecolor="white")
+plt.title("Distribution of log_complaints_total (log1p transform)")
+plt.xlabel("log_complaints_total")
+plt.ylabel("Frequency")
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig03_hist_log_complaints_total")
+plt.show()
+
+
+# Boxplot by borough (visualize heterogeneity + outliers)
+# plt.figure(figsize=(10, 4))
+# sns.boxplot(data=df, x="borough", y="complaints_total", color=DARK_BLUE)
+# plt.title("complaints_total by borough")
+# plt.xlabel("borough")
+# plt.ylabel("complaints_total")
+# plt.grid(alpha=0.25)
+# plt.tight_layout()
+# save_fig("Fig04_boxplot_complaints_by_borough")
+# plt.show()
+# ============================================================
+# Boxplot + Violin Plot by Borough
+# ============================================================
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+
+# Order boroughs by median complaint level (descending)
+order = (
+    df.groupby('borough')['complaints_total']
+      .median()
+      .sort_values(ascending=False)
+      .index
+)
+
+# -------------------------
+# Boxplot
+# -------------------------
+sns.boxplot(
+    data=df,
+    x='borough',
+    y='complaints_total',
+    order=order,
+    palette='Set2',
+    ax=axes[0]
+)
+
+axes[0].set_title('Distribution of Daily Complaints by Borough',
+                  fontsize=13, fontweight='bold')
+axes[0].set_xlabel('Borough')
+axes[0].set_ylabel('Daily Complaints')
+axes[0].tick_params(axis='x', rotation=20)
+axes[0].grid(alpha=0.25)
+
+# -------------------------
+# Violin Plot
+# -------------------------
+sns.violinplot(
+    data=df,
+    x='borough',
+    y='complaints_total',
+    order=order,
+    palette='Set2',
+    inner='quartile',
+    ax=axes[1]
+)
+
+axes[1].set_title('Complaint Density by Borough (Violin Plot)',
+                  fontsize=13, fontweight='bold')
+axes[1].set_xlabel('Borough')
+axes[1].set_ylabel('Daily Complaints')
+axes[1].tick_params(axis='x', rotation=20)
+axes[1].grid(alpha=0.25)
+
+plt.tight_layout()
+
+# Save figure (consistent naming style)
+save_fig("Fig04_boxplot_violin_complaints_by_borough")
+
+plt.show()
+
+"""### Purpose of Distributions & Potential Outliers:
+- Skewness / heavy tails
+- Outliers by borough
+- Whether a transformation (e.g., log) could stabilize variance and make modeling easier
+
+### Interpretation:
+- `complaints_total` is right-skewed (counts), so `log_complaints_total` looks more symmetric.
+- Borough boxplots show large level differences (e.g. Staten Island vs others).
+
+#### 4.2.2 Complaint composition
+"""
+
+#EDA - Complaint Composition (Top-K Buckets)
+
+# 10) EDA — complaint composition (topk_* buckets)
+
+# Compute shares (composition)
+shares = df[topk_cols].div(df["complaints_total"], axis=0)
+
+# Overall average share per bucket
+mean_shares = shares.mean().sort_values(ascending=False)
+display(mean_shares.to_frame("mean_share"))
+
+# Save table outputs for Overleaf
+save_table(mean_shares.to_frame("mean_share"), "Table_mean_share_overall")
+
+# Borough-level average shares
+shares_borough = pd.concat([df[["borough"]], shares], axis=1).groupby("borough").mean()
+
+# Heatmap (borough × bucket) — prettier than raw imshow (and easier to read)
+plt.figure(figsize=(12, 4))
+sns.heatmap(
+    shares_borough,
+    cmap="Blues",
+    cbar_kws={"shrink": 0.8},
+    linewidths=0.25
+)
+plt.title("Average complaint share by borough × complaint bucket")
+plt.xlabel("Complaint bucket")
+plt.ylabel("Borough")
+plt.tight_layout()
+save_fig("Fig05_composition_heatmap")
+plt.show()
+
+# Save the borough × share table too
+save_table(shares_borough, "Table_shares_by_borough")
+
+display(shares_borough)
+
+"""### Purpose of Complaint Composition (Top-K Buckets):
+Complaint-type composition adds detail beyond total volume: What kinds of issues dominate in the city? & Do boroughs have different complaint “profiles”?
+
+### Interpretation:
+- `topk_OTHER_cnt` typically captures ~half of complaints (many categories outside the Top-K).
+- Illegal parking and noise are consistently high-share categories.
+- Some categories are borough-specific (e.g., housing-related issues can be higher in some boroughs).
+
+In Part 4, we convert these into shares and also engineer diversity metrics (entropy / HHI).
+
+### 4.3 Temporal dynamics & seasonality
+
+#### 4.3.1 Time trends
+
+##### 4.3.1.1 Raw trend (borough + citywide)
+"""
+
+#EDA - Time Trends (Borough + Citywide)
+
+# 6) EDA — trends over time
+
+# Borough time series
+ts = df.pivot_table(index="date", columns="borough", values="complaints_total", aggfunc="mean").sort_index()
+
+plt.figure(figsize=(12, 5))
+for b in ts.columns:
+    plt.plot(ts.index, ts[b], label=str(b), linewidth=1.6, alpha=0.85)
+plt.title("Daily NYC 311 complaints_total by borough")
+plt.xlabel("Date")
+plt.ylabel("complaints_total")
+plt.legend(ncol=3, fontsize=9)
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig06_timeseries_by_borough")
+plt.show()
+
+# Citywide total (sum across boroughs per day)
+daily_city = df.groupby("date", as_index=False).agg(
+    complaints_total_city=("complaints_total", "sum"),
+    temp_mean=("temp_mean", "mean"),
+    precipitation_sum=("precipitation_sum", "sum"),
+    event_day=("event_day", "max"),
+    is_weekend=("is_weekend", "max"),
+)
+
+plt.figure(figsize=(12, 4))
+plt.plot(
+    daily_city["date"],
+    daily_city["complaints_total_city"],
+    color=DARK_BLUE,
+    linewidth=2.2
+)
+plt.title("Citywide daily 311 complaints (sum across boroughs)")
+plt.xlabel("Date")
+plt.ylabel("complaints_total_city")
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig07_citywide_total_complaints")
+plt.show()
+
+"""### Purpose of Time-series plots:
+- Seasonality and trends
+- Borough differences over time
+- Sudden spikes/drops that may indicate outliers, events, or data issues
+
+### Interpretation:
+- Highest average borough: BROOKLYN (mean ≈ 2766.5 complaints/day).  
+- Lowest average borough: STATEN ISLAND (mean ≈ 314.4 complaints/day).  
+- The average daily level in BROOKLYN is about **8.8×** STATEN ISLAND, confirming strong spatial heterogeneity that should be captured via borough indicators and borough-level encodings.
+- Citywide maximum day: 15,885 on 2024-04-15; minimum day: 1,536 on 2024-06-16 (flagged for anomaly handling).
+
+##### 4.3.1.2 Moving average smoothing (7-day MA)
+
+**Output:** Line plot of citywide daily complaints with a 7-day moving average.
+"""
+
+# =============================================================================
+# Figure: Citywide Trend with 7-Day Moving Average
+# =============================================================================
+# We aggregate across boroughs to get a single citywide daily series, then smooth it with a 7-day MA.
+city = df.groupby("date", as_index=False)["complaints_total"].sum()
+city["ma7"] = city["complaints_total"].rolling(7, min_periods=1).mean()
+
+plt.figure(figsize=(12, 5))
+plt.plot(city["date"], city["complaints_total"], alpha=0.35, label="Daily total", color=LIGHT_GRAY)
+plt.plot(city["date"], city["ma7"], linewidth=2.8, label="7-day moving average", color=DARK_BLUE)
+plt.title("Citywide Daily Complaints with 7-Day Moving Average", fontsize=14, fontweight="bold")
+plt.xlabel("Date", fontsize=12)
+plt.ylabel("Total Complaints", fontsize=12)
+plt.legend(fontsize=10)
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig08_citywide_ma7")
+plt.show()
+
+"""### Purpose
+- A raw daily time series can be noisy due to day-to-day fluctuations.
+- A **7-day moving average** smooths short-term noise and makes **medium-term trend + weekly seasonality** easier to see.
+
+### Interpretation
+- Compare the smoothed line against the raw daily totals to identify **persistent increases/decreases**.
+- Visible divergences between the raw series and MA typically indicate **short-lived spikes** (potential anomalies or short shocks).
+- This visualization supports the later use of **rolling statistics features** (e.g., MA7, rolling std) in feature engineering.
+
+##### 4.3.1.3 Autocorrelation function (ACF)
+
+**Output:** Stem plot of autocorrelation coefficients across lags (days).
+"""
+
+# =============================================================================
+# Figure: Autocorrelation Function (ACF)
+# =============================================================================
+print("Generating autocorrelation function (ACF)...")
+
+def acf(x, lags=30):
+    """
+    Calculate autocorrelation function manually.
+
+    Args:
+        x: Time series array
+        lags: Number of lags to calculate
+
+    Returns:
+        List of autocorrelation coefficients
+    """
+    x = x - np.mean(x)
+    result = [1.0]  # ACF at lag 0 is always 1
+    for lag in range(1, lags + 1):
+        if len(x) <= lag:
+            break
+        corr = np.corrcoef(x[:-lag], x[lag:])[0, 1]
+        result.append(corr)
+    return result
+
+acf_vals = acf(city["complaints_total"].values, 30)
+
+plt.figure(figsize=(10, 5))
+markerline, stemlines, baseline = plt.stem(range(len(acf_vals)), acf_vals)
+# Style (requested: darker blue)
+markerline.set_color(DARK_BLUE)
+try:
+    stemlines.set_color(DARK_BLUE)
+except Exception:
+    pass
+baseline.set_color("gray")
+
+plt.axhline(0, color="black", linewidth=0.8)
+plt.axhline(1.96/np.sqrt(len(city)), color="red", linestyle="--", linewidth=1, label="95% CI")
+plt.axhline(-1.96/np.sqrt(len(city)), color="red", linestyle="--", linewidth=1)
+plt.title("Autocorrelation Function (ACF) of Citywide Daily Complaints", fontsize=14, fontweight="bold")
+plt.xlabel("Lag (days)", fontsize=12)
+plt.ylabel("Autocorrelation", fontsize=12)
+plt.legend()
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig09_acf_citywide")
+plt.show()
+
+"""### Purpose
+- Complaint volume is a **time series** and may show persistence (yesterday predicts today).
+- The ACF helps detect **temporal dependence** and potential **weekly cycles**.
+
+### Interpretation
+- **Lag 1** autocorrelation above the 95% CI indicates strong day-to-day persistence.
+- Peaks around **lag 7** suggest a weekly cycle (weekday/weekend seasonality).
+- These patterns justify feature engineering choices like **lag features** (e.g., t−1) and **rolling windows** (e.g., MA7).
+
+#### 4.3.2 Day-of-week & weekend effects
+"""
+
+#EDA - Day-of-Week & Weekend Effects
+
+# 8) EDA — day-of-week / weekend patterns
+
+# Average by day-of-week (0=Mon ... 6=Sun)
+dow_mean = df.groupby("day_of_week")["complaints_total"].mean()
+
+plt.figure(figsize=(8, 4))
+plt.bar(dow_mean.index.astype(int), dow_mean.values, color=DARK_BLUE)
+plt.title("Average complaints_total by day_of_week (0=Mon ... 6=Sun)")
+plt.xlabel("day_of_week")
+plt.ylabel("mean complaints_total")
+plt.grid(alpha=0.25, axis="y")
+plt.tight_layout()
+save_fig("Fig10_day_of_week_pattern")
+plt.show()
+
+# Weekend vs weekday (citywide)
+wk_mean = df.groupby("is_weekend")["complaints_total"].mean()
+
+plt.figure(figsize=(6, 4))
+plt.bar(["Weekday (0)", "Weekend (1)"], wk_mean.values, color=[DARK_BLUE, "orange"])
+plt.title("Average complaints_total: weekend vs weekday")
+plt.ylabel("mean complaints_total")
+plt.grid(alpha=0.25, axis="y")
+plt.tight_layout()
+save_fig("Fig11_weekend_vs_weekday")
+plt.show()
+
+# By-borough weekend effect (mean difference)
+wk_b = df.pivot_table(index="borough", columns="is_weekend", values="complaints_total", aggfunc="mean")
+wk_b["weekend_minus_weekday"] = wk_b.get(1) - wk_b.get(0)
+
+display(wk_b)
+
+# Save table for Overleaf
+save_table(wk_b, "Table_weekend_effect_by_borough")
+
+"""### Purpose of Day-of-Week & Weekend Effects:
+Weekly patterns (day-of-week and weekend effects) are common in urban service requests.  
+We visualize and summarize these patterns to motivate temporal features in Part 4.
+
+### Interpretation:
+- Citywide average weekday total ≈ 9,358 vs weekend total ≈ 7,831 (-16.3% lower on weekends).  
+- The highest average day-of-week (borough-day scale) is Monday (day_of_week=0) at ≈ 1912.8 complaints/day per borough, while weekends are the lowest.
+- These patterns justify features like `day_of_week`, `is_weekend`, and weekly rolling windows (7-day MA).
+
+### 4.4 Event & environment effects
+
+#### 4.4.1 Event effects (event-day comparison)
+"""
+
+#EDA - Event-Day Comparison
+
+# 9) EDA — event_day effect (simple comparison)
+
+event_counts = df["event_day"].value_counts().rename_axis("event_day").to_frame("n_rows")
+display(event_counts)
+save_table(event_counts, "Table_event_day_row_counts")
+
+event_mean = df.groupby("event_day")["complaints_total"].agg(["count", "mean", "median"])
+display(event_mean)
+save_table(event_mean, "Table_event_day_summary_stats")
+
+event_b = df.pivot_table(index="borough", columns="event_day", values="complaints_total", aggfunc="mean")
+event_b["event_minus_non"] = event_b.get(1) - event_b.get(0)
+display(event_b)
+save_table(event_b, "Table_event_effect_by_borough")
+
+# Plot (boxplot)
+df_plot = df.copy()
+df_plot["event_day_label"] = df_plot["event_day"].map({0: "Non-event (0)", 1: "Event (1)"})
+
+plt.figure(figsize=(7, 4))
+sns.boxplot(
+    data=df_plot,
+    x="event_day_label",
+    y="complaints_total",
+    palette=[DARK_BLUE, "orange"]
+)
+plt.title("complaints_total: event day vs non-event day")
+plt.xlabel("")
+plt.ylabel("complaints_total")
+plt.grid(alpha=0.25, axis="y")
+plt.tight_layout()
+save_fig("Fig12_event_day_boxplot")
+plt.show()
+
+"""### Purpose of Event-Day Comparison:
+Events may shift complaint behavior (crowds, noise, transportation disruption).  
+We compare event vs non-event days descriptively and then quantify uncertainty with a t-test.
+
+### Interpretation:
+- Citywide average total on event days ≈ 8,164 vs non-event days ≈ 8,960 (-8.9% difference).  
+- Welch t-test on borough-day complaints gives p = 0.2365, so we do not find strong evidence of a mean shift at this aggregation level.
+- This motivates interaction features (e.g., event × weekend, event × temperature) and potentially borough-specific event effects.
+
+#### 4.4.2 Weather effects (weather relationships)
+"""
+
+#title: EDA - Weather Relationships
+# =====================
+# 11) EDA — weather relationships (Task 3)
+# =====================
+
+# Citywide daily aggregates (to avoid borough scale differences dominating correlations)
+daily = df.groupby("date", as_index=False).agg(
+    complaints_total_city=("complaints_total", "sum"),
+    temp_mean=("temp_mean", "mean"),
+    temp_max=("temp_max", "mean"),
+    temp_min=("temp_min", "mean"),
+    precipitation_sum=("precipitation_sum", "sum"),
+    rain_sum=("rain_sum", "sum"),
+    snowfall_sum=("snowfall_sum", "sum"),
+    wind_speed_mean=("wind_speed_mean", "mean"),
+    cloud_cover_mean=("cloud_cover_mean", "mean"),
+    event_day=("event_day", "max"),
+    is_weekend=("is_weekend", "max"),
+)
+
+corr_small = daily[["complaints_total_city", "temp_mean", "precipitation_sum", "event_day", "is_weekend"]].corr()
+display(corr_small)
+save_table(corr_small, "Table_citywide_weather_corr_small")
+
+# Scatter: citywide complaints vs temperature
+plt.figure(figsize=(7, 4))
+plt.scatter(
+    daily["temp_mean"],
+    daily["complaints_total_city"],
+    alpha=0.75,
+    color=DARK_BLUE,
+    edgecolor="white",
+    linewidth=0.5
+)
+plt.title("Citywide complaints vs mean temperature")
+plt.xlabel("temp_mean")
+plt.ylabel("complaints_total_city")
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig13_citywide_temp_vs_complaints")
+plt.show()
+
+# Scatter: citywide complaints vs precipitation
+plt.figure(figsize=(7, 4))
+plt.scatter(
+    daily["precipitation_sum"],
+    daily["complaints_total_city"],
+    alpha=0.75,
+    color=DARK_BLUE,
+    edgecolor="white",
+    linewidth=0.5
+)
+plt.title("Citywide complaints vs precipitation_sum")
+plt.xlabel("precipitation_sum")
+plt.ylabel("complaints_total_city")
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig14_citywide_precip_vs_complaints")
+plt.show()
+
+# Stronger, more domain-plausible relationship:
+# Heat/Hot Water complaints typically drop as temperature increases.
+heat_col = "topk_HEAT_HOT_WATER_cnt"
+heat_share = df[heat_col] / df["complaints_total"]
+
+print("Correlation(temp_mean, HEAT/HOT_WATER count):", round(df["temp_mean"].corr(df[heat_col]), 3))
+print("Correlation(temp_mean, HEAT/HOT_WATER share):", round(df["temp_mean"].corr(heat_share), 3))
+
+plt.figure(figsize=(7, 4))
+plt.scatter(
+    df["temp_mean"],
+    heat_share,
+    alpha=0.30,
+    color=DARK_BLUE,
+    edgecolor="white",
+    linewidth=0.2
+)
+plt.title("Heat/Hot Water share vs temp_mean (all borough-days)")
+plt.xlabel("temp_mean")
+plt.ylabel("HEAT/HOT_WATER share")
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig15_heat_share_vs_temp")
+plt.show()
+
+"""### Purpose of Weather Relationships:
+We explore how weather relates to complaints:
+- At the citywide level (to reduce borough scale differences)
+- And for specific complaint types where domain logic suggests strong relationships
+
+### Interpretation:
+- Citywide correlations between total complaints and weather are generally weak (complex drivers).
+- A strong, domain-plausible relationship appears for HEAT/HOT WATER complaints:
+  - Corr(temp_mean, HEAT/HOT WATER count) ≈ -0.597
+  - Corr(temp_mean, HEAT/HOT WATER share) ≈ -0.669
+
+This suggests colder weather strongly increases heating-related complaints, even if it doesn't strongly move the overall total.
+
+### 4.5 Correlation & multicollinearity diagnostics
+
+#### 4.5.1 Correlation heatmap & multicollinearity (VIF)
+"""
+
+#EDA - Correlation Heatmap & Multicollinearity (VIF)
+
+# 12) EDA — correlation structure + multicollinearity diagnostics
+
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import statsmodels.api as sm
+
+# A) Correlation matrix (all numeric columns)
+num_cols_all = df.select_dtypes(include=[np.number]).columns.tolist()
+
+# Drop all-NA / constant columns (correlation undefined)
+num_cols_all = [
+    c for c in num_cols_all
+    if df[c].notna().any() and df[c].nunique(dropna=True) > 1
+]
+
+corr_all = df[num_cols_all].corr(numeric_only=True)
+
+# Save correlation matrix values (full) for reference
+corr_all.to_csv(TABLE_DIR / "corr_full_numeric.csv")
+
+# Prettier diverging colormap (requested: make it look nicer than default coolwarm)
+cmap_corr = sns.diverging_palette(240, 10, as_cmap=True)
+
+plt.figure(figsize=(max(12, 0.35 * len(num_cols_all)), max(10, 0.35 * len(num_cols_all))))
+sns.heatmap(
+    corr_all,
+    cmap=cmap_corr,
+    center=0,
+    vmin=-1,
+    vmax=1,
+    cbar_kws={"shrink": 0.6},
+    linewidths=0.15
+)
+plt.title("Full correlation matrix (all numeric columns)")
+plt.tight_layout()
+save_fig("Fig16_corr_full_numeric")
+plt.show()
+
+# B) VIF (Variance Inflation Factor) for a curated feature subset
+vif_features = [
+    "temp_mean",
+    "precipitation_sum",
+    "wind_speed_mean",
+    "cloud_cover_mean",
+    "census_income_borough_median",
+    "airbnb_listing_count",
+    "event_day",
+    "is_weekend",
+]
+vif_features = [c for c in vif_features if c in df.columns]
+
+X_vif = df[vif_features].copy().dropna()
+X_vif = sm.add_constant(X_vif)
+
+vif_table = []
+for i, col in enumerate(X_vif.columns):
+    if col == "const":
+        continue
+    vif_table.append({"feature": col, "VIF": variance_inflation_factor(X_vif.values, i)})
+
+vif_table = pd.DataFrame(vif_table).sort_values("VIF", ascending=False)
+display(vif_table)
+
+# Save VIF table (CSV + LaTeX + PNG snapshot)
+save_table(vif_table.set_index("feature"), "Table_vif_curated_features")
+
+"""### Purpose of Correlation Heatmap & Multicollinearity (VIF):
+We examine correlations and variance inflation factors (VIF) to detect:
+- strong pairwise correlations (early multicollinearity warning)
+- predictors that may destabilize linear models due to multicollinearity
+
+### Interpretation:
+- Key linear correlations with the target (`complaints_total`) are modest:
+  - corr(temp_mean, complaints_total) ≈ 0.062
+  - corr(precipitation_sum, complaints_total) ≈ -0.054
+  - corr(is_weekend, complaints_total) ≈ -0.158
+  - corr(event_day, complaints_total) ≈ -0.039
+- Weak correlations do not rule out meaningful relationships; they can be non-linear or lagged.
+- The VIF table below is used to decide whether to:
+  - drop/recombine correlated predictors,
+  - prefer regularization,
+  - or use PCA as a feature engineering option (shown later).
+
+#### 4.5.2 Outliers & influential points diagnostics
+"""
+
+#EDA - Outliers & Influential Points Diagnostics
+
+# 13) EDA — outliers & influential points
+import statsmodels.formula.api as smf
+
+# Simple baseline regression (for diagnostics only)
+df_reg = df.copy()
+df_reg = df_reg.dropna(subset=["log_complaints_total", "temp_mean", "precipitation_sum", "month", "is_weekend", "event_day", "borough"])
+
+model = smf.ols("log_complaints_total ~ C(borough) + temp_mean + precipitation_sum + is_weekend + event_day + month", data=df_reg).fit()
+print(model.summary().tables[0])
+print(model.summary().tables[1])
+
+influence = model.get_influence()
+sf = influence.summary_frame()
+
+# Add identifiers back for interpretation
+sf = sf.reset_index(drop=True)
+sf = pd.concat(
+    [df_reg[["date", "borough", "complaints_total", "temp_mean", "precipitation_sum", "event_day"]].reset_index(drop=True), sf],
+    axis=1
+)
+
+# Rules of thumb (Lecture 02 style)
+n = model.nobs
+p = int(model.df_model) + 1  # includes intercept
+cook_thr = 4 / n
+leverage_thr = 2 * p / n
+
+print(f"n={int(n)}, p={p} | Cook's threshold ~ 4/n = {cook_thr:.4f} | leverage threshold ~ 2p/n = {leverage_thr:.4f}")
+
+# Top influential points by Cook's distance
+top_cook = sf.sort_values("cooks_d", ascending=False).head(10)
+display(top_cook[["date", "borough", "complaints_total", "temp_mean", "precipitation_sum", "event_day", "cooks_d", "hat_diag", "student_resid"]])
+
+# Save influential-points table
+save_table(
+    top_cook[["date", "borough", "complaints_total", "temp_mean", "precipitation_sum", "event_day", "cooks_d", "hat_diag", "student_resid"]].set_index(["date", "borough"]),
+    "Table_top10_influential_points_cooksd"
+)
+
+# Visual: Cook's distance (requested: darker blue + save)
+plt.figure(figsize=(10, 4))
+try:
+    markerline, stemlines, baseline = plt.stem(sf["cooks_d"].values)
+except TypeError:
+    # Some matplotlib versions return different objects, but the basic call still works
+    markerline, stemlines, baseline = plt.stem(sf["cooks_d"].values)
+
+# Style stem
+try:
+    markerline.set_color(DARK_BLUE)
+    stemlines.set_color(DARK_BLUE)
+    baseline.set_color("gray")
+except Exception:
+    pass
+
+plt.axhline(cook_thr, linestyle="--", color="red", linewidth=1.5, label="4/n threshold")
+plt.title("Cook's distance across observations (baseline OLS)")
+plt.xlabel("Observation index")
+plt.ylabel("Cook's D")
+plt.legend()
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig17_cooks_distance")
+plt.show()
+
+# Visual: leverage vs studentized residuals (classic influence diagnostic)
+plt.figure(figsize=(6, 5))
+plt.scatter(sf["hat_diag"], sf["student_resid"], alpha=0.55, color=DARK_BLUE, edgecolor="white", linewidth=0.4)
+plt.axvline(leverage_thr, linestyle="--", color="red", linewidth=1.5, label="2p/n threshold")
+plt.axhline(0, linestyle="--", color="gray", linewidth=1.0)
+plt.title("Leverage (hat) vs studentized residuals")
+plt.xlabel("hat_diag (leverage)")
+plt.ylabel("student_resid")
+plt.legend()
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig18_leverage_vs_studentized_residuals")
+plt.show()
+
+"""### Purpose of Outliers & Influential Points Diagnostics:
+Influence diagnostics (studentized residuals, leverage/hat values, DFFITS, Cook’s distance) help identify observations that can disproportionately affect linear-model fits.
+
+### Interpretation:
+- We treat these diagnostics as screening tools (not automatic deletion rules).
+- The citywide minimum on 2024-06-16 (very low total) is a prime candidate to appear as an influential point; we consider winsorization/capping as a remedial option rather than dropping the row.
+- If influential points correspond to real extreme events (e.g., severe weather), we retain them and instead use robust transforms (log / power) or robust models.
+
+#### 4.5.3 PCA (exploratory dimension reduction)
+"""
+
+#EDA - PCA
+
+# 14) PCA view of borough-days
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+# Use complaint composition shares (excluding OTHER) + weather
+share_cols = [c.replace("_cnt", "_share") for c in topk_cols]
+df_pca = df.copy()
+
+for c_cnt in topk_cols:
+    df_pca[c_cnt.replace("_cnt", "_share")] = df_pca[c_cnt] / df_pca["complaints_total"]
+
+# Exclude the "OTHER" share to avoid perfect dependence (shares sum to 1)
+share_cols_no_other = [c for c in share_cols if "OTHER" not in c]
+
+pca_features = share_cols_no_other + [
+    "temp_mean",
+    "precipitation_sum",
+    "wind_speed_mean",
+    "cloud_cover_mean",
+    "event_day",
+    "is_weekend",
+    "month",
+]
+X = df_pca[pca_features].copy()
+X = X.dropna()
+borough_for_plot = df_pca.loc[X.index, "borough"].astype(str)
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+pca = PCA(n_components=2, random_state=42)
+Z = pca.fit_transform(X_scaled)
+
+print("Explained variance ratio:", pca.explained_variance_ratio_)
+
+plt.figure(figsize=(7, 5))
+for b in sorted(borough_for_plot.unique()):
+    idx = (borough_for_plot == b).values
+    plt.scatter(Z[idx, 0], Z[idx, 1], alpha=0.45, label=b)
+
+plt.title("PCA of borough-days (complaint shares + weather + calendar)")
+plt.xlabel("PC1")
+plt.ylabel("PC2")
+plt.legend(fontsize=8)
+plt.grid(alpha=0.25)
+plt.tight_layout()
+save_fig("Fig19_pca_scatter")
+plt.show()
+
+"""### Purpose of PCA:
+PCA is an optional dimension-reduction technique (can be considered feature engineering).  
+Here we use it for exploration: do borough-days cluster by borough based on complaint composition + weather + calendar?
+
+### Interpretation:
+- Explained variance (2 components):
+  - PC1 ≈ **0.206**
+  - PC2 ≈ **0.196**
+  - Total ≈ **0.402**
+
+If borough clusters separate in the PC plot, it suggests boroughs have distinct complaint/weather profiles.
+
+## 5. Feature engineering process & justification
+
+This section constructs new features to improve predictive signal while keeping the pipeline **time-aware** (lags/rolling features are built within borough series).
+"""
+
+#Feature Engineering (Time, Weather, Shares, Lags, Interactions)
+
+# 16) Feature engineering
+df_fe = df.copy()
+
+# ---- 16.1 Time index (trend feature)
+min_date = df_fe["date"].min()
+df_fe["day_index"] = (df_fe["date"] - min_date).dt.days
+
+# ---- 16.2 Cyclical encodings (weekly + yearly seasonality proxies)
+df_fe["dow_sin"] = np.sin(2*np.pi*df_fe["day_of_week"]/7)
+df_fe["dow_cos"] = np.cos(2*np.pi*df_fe["day_of_week"]/7)
+
+df_fe["month_sin"] = np.sin(2*np.pi*(df_fe["month"]-1)/12)
+df_fe["month_cos"] = np.cos(2*np.pi*(df_fe["month"]-1)/12)
+
+# ---- 16.3 Weather-derived features
+df_fe["temp_range"] = df_fe["temp_max"] - df_fe["temp_min"]
+df_fe["is_freezing"] = (df_fe["temp_min"] <= 0).astype(int)
+df_fe["is_precip"] = (df_fe["precipitation_sum"] > 0).astype(int)
+df_fe["is_snow"] = (df_fe["snowfall_sum"] > 0).astype(int)
+
+# ---- 16.4 Per-capita complaint rate (per 1,000 people)
+df_fe["complaints_per_1000_people"] = (
+    df_fe["complaints_total"] / df_fe["census_population_borough_sum"] * 1000
+)
+
+# ---- 16.5 Complaint composition shares (drop one share later to avoid sum-to-1 dependence)
+for c_cnt in topk_cols:
+    df_fe[c_cnt.replace("_cnt","_share")] = df_fe[c_cnt] / df_fe["complaints_total"]
+
+share_cols = [c.replace("_cnt","_share") for c in topk_cols]
+share_cols_no_other = [c for c in share_cols if "OTHER" not in c]
+
+# Composition diversity metrics (creative but interpretable)
+P = df_fe[share_cols].clip(lower=1e-12)  # avoid log(0)
+df_fe["complaint_entropy"] = -(P * np.log(P)).sum(axis=1)      # Shannon entropy
+df_fe["complaint_hhi"] = (df_fe[share_cols]**2).sum(axis=1)    # concentration (Herfindahl)
+df_fe["complaint_top_share"] = df_fe[share_cols].max(axis=1)
+
+# A domain-motivated share
+df_fe["heat_hot_water_share"] = df_fe["topk_HEAT_HOT_WATER_cnt"] / df_fe["complaints_total"]
+
+# ---- 16.6 Lag-safe features (avoid leakage by using *previous-day* information)
+df_fe = df_fe.sort_values(["borough","date"]).reset_index(drop=True)
+
+df_fe["complaints_total_lag1"] = df_fe.groupby("borough")["complaints_total"].shift(1)
+df_fe["complaints_total_lag7"] = df_fe.groupby("borough")["complaints_total"].shift(7)
+
+df_fe["complaints_total_ma7_prev"] = df_fe.groupby("borough")["complaints_total"].transform(
+    lambda s: s.shift(1).rolling(7, min_periods=3).mean()
+)
+
+df_fe["temp_mean_ma7_prev"] = df_fe.groupby("borough")["temp_mean"].transform(
+    lambda s: s.shift(1).rolling(7, min_periods=3).mean()
+)
+
+# Changes / growth
+
+
+# ---- 16.6B Additional lag structure (time-safe) for change features
+df_fe["complaints_total_lag2"] = df_fe.groupby("borough")["complaints_total"].shift(2)
+
+# Past-only change features (avoid using same-day target)
+df_fe["complaints_total_diff_lag1"] = df_fe["complaints_total_lag1"] - df_fe["complaints_total_lag2"]
+df_fe["complaints_total_pct_change_lag1"] = (
+    (df_fe["complaints_total_lag1"] - df_fe["complaints_total_lag2"]) / df_fe["complaints_total_lag2"]
+).replace([np.inf, -np.inf], np.nan)
+
+# ---- 16.6C Lagged complaint composition (safe for predicting today's volume)
+# We keep same-day shares for EDA, but use *lagged* shares for modeling.
+for c in share_cols_no_other + ["complaint_entropy", "complaint_hhi", "complaint_top_share", "heat_hot_water_share"]:
+    if c in df_fe.columns:
+        df_fe[f"{c}_lag1"] = df_fe.groupby("borough")[c].shift(1)
+# ---- 16.7 Interaction terms (Lecture 01: interaction examples)
+df_fe["weekend_x_precip"] = df_fe["is_weekend"] * df_fe["precipitation_sum"]
+df_fe["event_x_weekend"] = df_fe["event_day"] * df_fe["is_weekend"]
+df_fe["event_x_temp"] = df_fe["event_day"] * df_fe["temp_mean"]
+df_fe["freezing_x_heat_share"] = df_fe["is_freezing"] * df_fe["heat_hot_water_share"]
+
+# ---- 16.8 Simple binning (Lecture 01 example: bin continuous vars)
+df_fe["temp_bin"] = pd.cut(
+    df_fe["temp_mean"],
+    bins=[-np.inf, 0, 10, 20, 30, np.inf],
+    labels=["<=0C","0-10C","10-20C","20-30C",">30C"]
+)
+
+# ---- 16.X Data quality flags by date (from the anomaly detection step)
+# These flags are for *filtering / reporting* only; do NOT use them as predictors for same-day complaint models (leakage risk).
+if "quality_by_date" in globals():
+    df_fe = df_fe.merge(
+        quality_by_date[["date","is_outlier_citywide","is_outlier_low_citywide","is_outlier_high_citywide"]],
+        on="date",
+        how="left",
+    )
+else:
+    df_fe["is_outlier_citywide"] = 0
+    df_fe["is_outlier_low_citywide"] = 0
+    df_fe["is_outlier_high_citywide"] = 0
+
+print("Feature engineering done. New shape:", df_fe.shape)
+display(df_fe.head())
+
+"""### Purpose of Feature Engineering (Time, Weather, Shares, Lags, Interactions):
+Feature engineering creates new variables that better represent patterns in the data.
+
+We engineer:
+- **time features** (trend + cyclical encodings)
+- **weather features** (temp_range, freezing/precip indicators)
+- **per-capita rates** (normalize by borough population)
+- **complaint composition shares** and diversity metrics (entropy, HHI)
+- **lagged features** (time-safe predictors)
+- **interaction terms** (e.g., weekend × precipitation)
+- **bins** (temperature categories)
+
+### Why this matters
+These features:
+- make the dataset more useful for downstream modeling,
+- reduce multicollinearity (e.g., temp_range),
+- and help capture nonlinear or seasonal behavior (e.g., sin/cos encodings).
+
+### 5.1 Missing value handling (EDA-friendly vs time-safe)
+"""
+
+#Preprocessing - Missing Value Handling (EDA-friendly vs Time-safe)
+
+# 17) Handle missing values
+miss2 = df_fe.isna().mean().sort_values(ascending=False)
+display(miss2[miss2>0].to_frame("missing_rate_after_FE"))
+
+cols_with_missing = miss2[miss2>0].index.tolist()
+print("Columns with missing values:", cols_with_missing)
+
+# -------------------------------------------------------------------
+# Two "processed" views:
+# 1) df_imp  -> EDA-friendly (panel-aware imputation that may use bfill)
+# 2) df_time -> time-safe (NO backward fill; keep structural lag NAs and drop those rows later)
+# -------------------------------------------------------------------
+
+# ---- 17.1 EDA-friendly imputed dataset (ok for plots/correlations)
+df_imp = df_fe.copy()
+
+# Missingness indicators (often useful for modeling)
+for c in cols_with_missing:
+    df_imp[f"{c}_missing"] = df_imp[c].isna().astype(int)
+
+for c in cols_with_missing:
+    if pd.api.types.is_numeric_dtype(df_imp[c]):
+        # Panel-aware fill: for EDA convenience we allow bfill+ffill within borough
+        df_imp[c] = df_imp.groupby("borough")[c].transform(lambda s: s.bfill().ffill())
+        df_imp[c] = df_imp[c].fillna(df_imp[c].median())
+    else:
+        mode_val = df_imp[c].mode(dropna=True)
+        df_imp[c] = df_imp[c].fillna(mode_val.iloc[0] if len(mode_val)>0 else "UNKNOWN")
+
+print("EDA-friendly missingness after imputation (should be ~0):")
+display(df_imp.isna().mean().sort_values(ascending=False).head(10).to_frame("missing_rate"))
+
+# ---- 17.2 Time-safe dataset for model matrices (avoid future-looking imputation)
+df_time = df_fe.copy()
+
+for c in cols_with_missing:
+    df_time[f"{c}_missing"] = df_time[c].isna().astype(int)
+
+for c in cols_with_missing:
+    if pd.api.types.is_numeric_dtype(df_time[c]):
+        # IMPORTANT: forward fill only (past -> present). No backward fill.
+        df_time[c] = df_time.groupby("borough")[c].transform(lambda s: s.ffill())
+        # If anything remains missing (e.g., first day lag), keep as NaN for now.
+    else:
+        mode_val = df_time[c].mode(dropna=True)
+        df_time[c] = df_time[c].fillna(mode_val.iloc[0] if len(mode_val)>0 else "UNKNOWN")
+
+print("Time-safe missingness snapshot (expected: lags/rollings still missing at start of each borough):")
+display(df_time.isna().mean().sort_values(ascending=False).head(10).to_frame("missing_rate_time_safe"))
+
+"""### Purpose of Missing Value Handling (EDA-friendly vs Time-safe):
+Missing-value handling is both an EDA and preprocessing concern.
+
+We explicitly create **two versions**:
+1. **EDA-friendly** (`df_imp` / `df_proc_eda`)  
+   - Allows `bfill + ffill` within each borough for convenience in plots/correlations.
+2. **Time-safe** (`df_time` / `df_proc_time`)  
+   - Uses **forward fill only** (past → present), avoids using future data.  
+   - Structural lag missing values remain, and we drop earliest rows when building model matrices.
+
+We also create **missingness indicator columns** (often useful predictors).
+
+### 5.2 Optional KNN imputation
+"""
+
+#Preprocessing - OPTIONAL KNN Imputation
+
+# 17B) OPTIONAL: KNN imputation
+
+from sklearn.impute import KNNImputer
+
+# Apply KNN to numeric columns (KNN uses distance; scaling can matter!)
+num_cols = df_fe.select_dtypes(include=[np.number]).columns
+
+knn = KNNImputer(n_neighbors=5, weights="distance")
+df_knn_num = pd.DataFrame(knn.fit_transform(df_fe[num_cols]), columns=num_cols, index=df_fe.index)
+
+# Compare missing columns before vs after (should be filled)
+print("Missing rate BEFORE (numeric):")
+display(df_fe[num_cols].isna().mean().sort_values(ascending=False).head(8).to_frame("missing_rate_before"))
+
+print("Missing rate AFTER KNN (numeric):")
+display(df_knn_num.isna().mean().sort_values(ascending=False).head(8).to_frame("missing_rate_after_knn"))
+
+# We'll keep df_imp (panel-aware imputation) as our main imputed dataset.
+
+"""### Why KNN imputation is OPTIONAL here
+KNN imputation is taught in Lecture/Lab as a useful technique, but in this dataset it is optional because:
+
+1. **Missingness is tiny and structural**  
+   - Here, missing values mainly come from **lag/rolling features** at the start of each borough series (not random sensor/API gaps).
+   - KNN does not add much value when missingness is deterministic like “first day has no lag”.
+
+2. **Time-series / panel leakage risk**  
+   - Standard KNN imputation can “borrow” information from future rows unless carefully applied within a training window.
+
+3. **Distance-based methods require scaling**  
+   - Without careful scaling, variables with large magnitudes dominate neighbor selection.
+
+4. **Computational cost vs benefit**  
+   - For large datasets KNN can be expensive; we include it mainly as a **demonstration** (advanced rubric coverage).
+
+
+- Keep the main pipeline as **panel-aware forward-fill** for time-safe modeling,
+- and use KNN only as a sensitivity check (and only within training data if you later model).
+
+### 5.3 Outliers & skewness transforms
+"""
+
+#Preprocessing - Outliers & Skewness Transforms
+
+# 18) Outliers & skewness: winsorization + log/power transforms (Lecture 02 + Lab 2)
+from scipy.stats.mstats import winsorize
+from scipy.stats import boxcox
+
+def add_outlier_and_skew_transforms(df_in: pd.DataFrame) -> pd.DataFrame:
+    df_out = df_in.copy()
+
+    # 18.1 Winsorize a few heavily-skewed *predictors* (NOT the target)
+    wins_cols = ["precipitation_sum", "rain_sum", "snowfall_sum", "wind_gust_mean"]
+    for c in wins_cols:
+        if c in df_out.columns:
+            # winsorize ignores NaNs by design if we convert with np.array; keep NaNs as-is
+            x = df_out[c].to_numpy(dtype=float)
+            df_out[c + "_wins"] = np.array(winsorize(x, limits=[0.01, 0.01]), dtype=float)
+
+    # 18.2 Log1p transforms (useful for heavy tails / count-like predictors)
+    log_cols = ["precipitation_sum", "rain_sum", "snowfall_sum", "airbnb_total_reviews", "airbnb_listing_count"]
+    for c in log_cols:
+        if c in df_out.columns:
+            df_out["log1p_" + c] = np.log1p(df_out[c])
+
+    # 18.3 Box-Cox example (requires strictly positive input)
+    # We demonstrate on precipitation_sum by adding a small constant so zeros become positive.
+    # NOTE: Box-Cox is optional; Yeo-Johnson (used later) works with zeros/negatives.
+    if "precipitation_sum" in df_out.columns:
+        x = df_out["precipitation_sum"].fillna(0).astype(float) + 1e-3
+        bc, lam = boxcox(x)
+        df_out["boxcox_precipitation_sum"] = bc
+        df_out["_boxcox_lambda_precipitation_sum"] = lam  # constant; stored for transparency
+
+    return df_out
+
+df_proc_eda = add_outlier_and_skew_transforms(df_imp)
+df_proc_time = add_outlier_and_skew_transforms(df_time)
+
+# Quick skewness check (before vs after for precipitation_sum) using the EDA-friendly copy
+sk_before = df_proc_eda["precipitation_sum"].skew()
+sk_after_wins = df_proc_eda["precipitation_sum_wins"].skew() if "precipitation_sum_wins" in df_proc_eda.columns else np.nan
+sk_after_log = df_proc_eda["log1p_precipitation_sum"].skew() if "log1p_precipitation_sum" in df_proc_eda.columns else np.nan
+
+print("Skewness precipitation_sum:", round(sk_before,3))
+print("Skewness precipitation_sum_wins:", round(sk_after_wins,3))
+print("Skewness log1p_precipitation_sum:", round(sk_after_log,3))
+
+display(df_proc_eda[["precipitation_sum","precipitation_sum_wins","log1p_precipitation_sum","boxcox_precipitation_sum"]].head())
+
+"""### Purpose of Outliers & Skewness Transforms:
+Many predictors are skewed (especially precipitation).  
+We demonstrate common remedies (Lecture/Lab):
+- **Winsorization** (cap extreme values)
+- **log1p** transforms (good for heavy-tailed nonnegative variables)
+- **Box-Cox** (requires strictly positive; we add a tiny constant)
+
+### Interpretation (precipitation example):
+Skewness of `precipitation_sum`:
+- Original: **3.24**
+- Winsorized (1% tails): **2.79**
+- log1p: **1.28**
+- Box-Cox (λ ≈ -0.034): **0.08**
+
+This shows why transformations can make predictors behave more “model-friendly”.
+
+### 5.4 Model matrix construction (encoding, variance filter, scaling)
+"""
+
+#Preprocessing - Model Matrix Construction (Encoding, Variance Filter, Scaling)
+
+# 19) Build model-ready matrices (encoding + variance filter + scaling)
+
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, PowerTransformer
+
+# -----------------------
+# 19.1 Choose target
+# -----------------------
+TARGET = "log_complaints_total"
+
+# -----------------------
+# 19.2 Choose predictors (avoid perfect collinearity / leakage)
+# -----------------------
+# Drop redundant columns and unsafe rolling means that include current day
+drop_cols = [
+    "is_outlier_citywide", "is_outlier_low_citywide", "is_outlier_high_citywide",
+    "unique_complaints",
+    "complaints_total_ma7",      # includes current day -> leakage if target is same-day complaints
+    "temp_mean_ma7",             # includes current day
+    "precipitation_sum_ma7",     # includes current day
+]
+
+# Predictor set for a *future* modeling step:
+# - Use time, weather, events, borough, structural
+# - Use lagged complaint-based features (past information), not same-day shares or same-day derived rates.
+predictor_cols = []
+
+# Time & seasonality
+predictor_cols += ["day_index", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend", "event_day"]
+
+# Weather (raw + derived + transformed versions)
+predictor_cols += ["temp_mean", "temp_range", "wind_speed_mean", "cloud_cover_mean"]
+predictor_cols += ["precipitation_sum_wins", "log1p_precipitation_sum", "boxcox_precipitation_sum"]
+predictor_cols += ["is_freezing", "is_precip", "is_snow"]
+
+# Structural borough-level variables (OPTION B uses these instead of borough dummies)
+predictor_cols_structural = structural_cols.copy()
+
+# Lag-safe time-series features (past only)
+predictor_cols += ["complaints_total_lag1", "complaints_total_lag2", "complaints_total_lag7", "complaints_total_ma7_prev"]
+predictor_cols += ["temp_mean_ma7_prev"]
+
+# Past-only change features
+predictor_cols += ["complaints_total_diff_lag1", "complaints_total_pct_change_lag1"]
+
+# Lagged complaint composition (yesterday’s composition)
+lagged_comp = [c + "_lag1" for c in (share_cols_no_other + ["complaint_entropy", "complaint_hhi", "complaint_top_share", "heat_hot_water_share"])]
+predictor_cols += [c for c in lagged_comp if c in df_proc_time.columns]
+
+# Interactions (weather/time/event based; no same-day complaint leakage)
+predictor_cols += ["weekend_x_precip", "event_x_weekend", "event_x_temp"]
+
+# Categorical engineered bin + borough
+cat_cols = ["borough", "temp_bin"]
+
+# -----------------------
+# 19.3 Construct base modeling frame (time-safe)
+# -----------------------
+df_mm = df_proc_time.copy()
+
+# OPTIONAL: drop suspected partial-day observations (data quality flag)
+if "is_outlier_low_citywide" in df_mm.columns:
+    before = len(df_mm)
+    df_mm = df_mm[df_mm["is_outlier_low_citywide"]==0].copy()
+    print(f"Dropped suspected partial-day rows (low outlier days): {before - len(df_mm)}")
+
+
+# Ensure required columns exist (defensive)
+all_needed = [TARGET] + predictor_cols + predictor_cols_structural + cat_cols
+missing_needed = [c for c in all_needed if c not in df_mm.columns]
+if missing_needed:
+    print("WARNING: missing expected columns:", missing_needed)
+
+# Option A: include borough dummies, EXCLUDE structural variables (avoid perfect dependence in linear models)
+df_A = df_mm[[TARGET] + predictor_cols + cat_cols].drop(columns=[c for c in drop_cols if c in df_mm.columns], errors="ignore")
+# Drop rows with missing in target or any selected predictors (time-safe handling of structural lag NAs)
+df_A = df_A.dropna(subset=[TARGET] + predictor_cols).copy()
+
+# Dummy encoding (drop_first=True to avoid dummy trap)
+X_A = pd.get_dummies(df_A.drop(columns=[TARGET]), columns=cat_cols, drop_first=True)
+y_A = df_A[TARGET].copy()
+
+print("Model Matrix A shape (time-safe, no leakage predictors):", X_A.shape)
+
+# Option B: EXCLUDE borough, INCLUDE structural variables (lets continuous borough-level vars capture differences)
+df_B = df_mm[[TARGET] + predictor_cols + predictor_cols_structural + ["temp_bin"]].drop(columns=[c for c in drop_cols if c in df_mm.columns], errors="ignore")
+df_B = df_B.dropna(subset=[TARGET] + predictor_cols).copy()
+X_B = pd.get_dummies(df_B.drop(columns=[TARGET]), columns=["temp_bin"], drop_first=True)
+y_B = df_B[TARGET].copy()
+
+print("Model Matrix B shape (time-safe, includes structural vars):", X_B.shape)
+
+# -----------------------
+# 19.4 Near-zero / zero-variance filter (Lab 2)
+# -----------------------
+vt = VarianceThreshold(threshold=0.0)
+X_A_vt = pd.DataFrame(vt.fit_transform(X_A), columns=X_A.columns[vt.get_support()], index=X_A.index)
+dropped_vt = [c for c in X_A.columns if c not in X_A_vt.columns]
+print("Dropped zero-variance columns (A):", dropped_vt)
+
+# -----------------------
+# 19.5 Scaling versions (Lecture 02: standardization vs normalization)
+# We'll scale ONLY continuous features; keep binary/dummies unchanged.
+# -----------------------
+def split_binary_continuous(X: pd.DataFrame):
+    binary_cols = []
+    cont_cols = []
+    for c in X.columns:
+        vals = X[c].dropna().unique()
+        # treat {0,1} (or very close) as binary
+        if len(vals) <= 2 and set(np.round(vals,6)).issubset({0,1}):
+            binary_cols.append(c)
+        else:
+            cont_cols.append(c)
+    return binary_cols, cont_cols
+
+bin_A, cont_A = split_binary_continuous(X_A_vt)
+
+scaler_std = StandardScaler()
+scaler_mm = MinMaxScaler()
+
+X_A_std = X_A_vt.copy()
+X_A_std[cont_A] = scaler_std.fit_transform(X_A_vt[cont_A])
+
+X_A_minmax = X_A_vt.copy()
+X_A_minmax[cont_A] = scaler_mm.fit_transform(X_A_vt[cont_A])
+
+# Power transform (Yeo-Johnson) + standardize (often useful for skewed predictors)
+pt = PowerTransformer(method="yeo-johnson", standardize=True)
+X_A_power = X_A_vt.copy()
+X_A_power[cont_A] = pt.fit_transform(X_A_vt[cont_A])
+
+print("Scaled matrices built:")
+print(" - X_A_vt:", X_A_vt.shape)
+print(" - X_A_std:", X_A_std.shape)
+print(" - X_A_minmax:", X_A_minmax.shape)
+print(" - X_A_power:", X_A_power.shape)
+
+"""### Purpose of Model Matrix Construction (Encoding, Variance Filter, Scaling):
+We build model-ready matrices:
+
+- One-hot encode categorical features (`borough`, `temp_bin`)
+- Remove **zero-variance** predictors (Lab 2)
+- Produce multiple preprocessing variants:
+  - raw (after variance filter)
+  - **standardized**
+  - **min-max**
+  - **power-transformed (Yeo–Johnson)**
+
+### Important design choices (to avoid leakage)
+Because our target is same-day complaints (`log_complaints_total`), we exclude predictors that directly contain same-day target information:
+- `unique_complaints` (duplicate of target scale)
+- same-day rolling means like `complaints_total_ma7` (contains current day)
+
+Instead, we rely on **lagged** complaint-based features (past-only).
+
+### 5.5 Output files
+"""
+
+#Output - Save Processed Data & Model Matrices
+
+# 20) Save outputs
+def safe_to_csv(df_obj: pd.DataFrame, path: str) -> str:
+    """Write CSV; if overwrite is not permitted, write to a versioned filename."""
+    try:
+        df_obj.to_csv(path, index=False)
+        return path
+    except PermissionError:
+        base, ext = os.path.splitext(path)
+        alt = base + "_v2" + ext
+        df_obj.to_csv(alt, index=False)
+        print(f"⚠️ PermissionError writing {path}. Saved to {alt} instead.")
+        return alt
+
+out_dir = "outputs_task3_task4"
+os.makedirs(out_dir, exist_ok=True)
+# Outputs are written to a local folder next to this notebook (portable across environments).
+
+# Processed datasets
+out_processed = os.path.join(out_dir, "Daily_Borough_Events_Panel_processed.csv")                 # EDA-friendly (imputed)
+out_processed_time = os.path.join(out_dir, "Daily_Borough_Events_Panel_processed_time_safe.csv") # time-safe (no backward fill)
+
+# Model matrices (time-safe)
+out_mm_A = os.path.join(out_dir, "Daily_Borough_Events_Panel_model_matrix_A.csv")
+out_mm_A_std = os.path.join(out_dir, "Daily_Borough_Events_Panel_model_matrix_A_standard.csv")
+out_mm_A_minmax = os.path.join(out_dir, "Daily_Borough_Events_Panel_model_matrix_A_minmax.csv")
+out_mm_A_power = os.path.join(out_dir, "Daily_Borough_Events_Panel_model_matrix_A_power.csv")
+
+saved_paths = []
+saved_paths.append(safe_to_csv(df_proc_eda, out_processed))
+saved_paths.append(safe_to_csv(df_proc_time, out_processed_time))
+
+saved_paths.append(safe_to_csv(X_A_vt.assign(**{TARGET: y_A}), out_mm_A))
+saved_paths.append(safe_to_csv(X_A_std.assign(**{TARGET: y_A}), out_mm_A_std))
+saved_paths.append(safe_to_csv(X_A_minmax.assign(**{TARGET: y_A}), out_mm_A_minmax))
+saved_paths.append(safe_to_csv(X_A_power.assign(**{TARGET: y_A}), out_mm_A_power))
+
+print("Saved files:")
+for p in saved_paths:
+    print(" -", p)
+
+# =============================================================================
+# Output packaging: Zip figures + tables + CSV outputs (Overleaf-ready)
+# =============================================================================
+zip_path = make_outputs_zip("outputs_task3_task4")
+print("✅ Overleaf-ready outputs zip created:", zip_path)
+
