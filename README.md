@@ -1,5 +1,4 @@
-
-# NYC 311 Complaint Analysis — Data Acquisition, Cleaning & Preprocessing
+# NYC 311 Complaint Analysis
 
 **Course:** GU4243/GR5243 Applied Data Science  
 **Project 1 — Team 5**  
@@ -9,7 +8,32 @@ Ketaki Dabade (kvd2112) · Junye Chen (jc6636) · Rui Lin (rl3445) · Xiao Xiao 
 
 ## Overview
 
-This script (`data_acquisition_cleaning_preprocessing.py`) collects data from five sources, merges them into a unified **daily × borough** panel for NYC 311 complaints (January–June 2024), and applies data quality checks, outlier handling, and missing-value imputation. The final output is a single analysis-ready CSV.
+This project analyzes NYC 311 non-emergency complaints from January through June 2024, integrating five heterogeneous data sources into a unified daily-by-borough panel. The analysis spans data acquisition, cleaning, exploratory data analysis (EDA), and feature engineering to produce model-ready datasets.
+
+## Repository Structure
+
+```
+├── data_acquisition_cleaning_preprocessing.py   ← Part 1–3: data collection & panel building
+├── Project1_Section3_Section4_Final.ipynb        ← Part 3–5: EDA & feature engineering
+├── new_york_listings_2024.csv                    ← Airbnb data (you provide)
+├── data/
+│   ├── raw/
+│   │   ├── nyc_311_raw.csv
+│   │   ├── weather_raw.csv
+│   │   └── census_demographics_raw.csv
+│   └── processed/
+│       └── Daily Borough Events Panel.csv
+├── outputs_task3_task4/
+│   ├── figures/                                  ← All EDA figures (PNG + PDF)
+│   ├── tables/                                   ← All summary tables (CSV + LaTeX + PNG)
+│   ├── Daily_Borough_Events_Panel_processed.csv
+│   ├── Daily_Borough_Events_Panel_processed_time_safe.csv
+│   ├── Daily_Borough_Events_Panel_model_matrix_A.csv
+│   ├── Daily_Borough_Events_Panel_model_matrix_A_standard.csv
+│   ├── Daily_Borough_Events_Panel_model_matrix_A_minmax.csv
+│   └── Daily_Borough_Events_Panel_model_matrix_A_power.csv
+└── README.md
+```
 
 ## Data Sources
 
@@ -30,75 +54,102 @@ pandas
 numpy
 requests
 matplotlib
+seaborn
 beautifulsoup4
+scikit-learn
+statsmodels
 ```
 
 Install all at once:
 
 ```bash
-pip install pandas numpy requests matplotlib beautifulsoup4
+pip install pandas numpy requests matplotlib seaborn beautifulsoup4 scikit-learn statsmodels
 ```
 
 ## Setup
 
 1. **Download the Airbnb dataset** from [Kaggle](https://www.kaggle.com/datasets/arianazmoudeh/airbnbopendata)
 2. **Rename** the downloaded file to `new_york_listings_2024.csv`
-3. **Place it** in the same directory as the script
+3. **Place it** in the project root directory
 
 All other datasets are downloaded automatically via APIs.
 
-## Usage
+## How to Run
+
+### Step 1: Data Acquisition, Cleaning & Preprocessing
 
 ```bash
 python data_acquisition_cleaning_preprocessing.py
 ```
 
-The script auto-detects the environment:
-- **Google Colab** → uses `/content/` as the base directory
-- **Local machine** → uses the script's directory as the base
+This script runs the full data pipeline (~30–40 min):
 
-Estimated runtime: **30–40 minutes** (mostly 311 API download).
+- **Part 1 — Data Collection:** Downloads 311 complaints (Socrata API), weather (Open-Meteo), events (web scraping + API), and census data (ACS API). Reads Airbnb from local file.
+- **Part 2 — Panel Construction:** Aggregates 311 to daily × borough counts, merges all five sources, engineers time/lag/rolling features.
+- **Part 3 — Data Quality:** Missing value analysis, validation checks, IQR-based outlier detection with winsorization of weather variables, and imputation.
 
-## Output
+**Output:** `data/processed/Daily Borough Events Panel.csv` (~910 rows × 40+ columns)
 
-```
-<project_root>/
-├── data/
-│   ├── raw/
-│   │   ├── nyc_311_raw.csv
-│   │   ├── weather_raw.csv
-│   │   └── census_demographics_raw.csv
-│   └── processed/
-│       └── Daily Borough Events Panel.csv    ← Final output
-├── web_scraped_nyc_jan_jun_2024_expanded.csv
-└── new_york_listings_2024.csv                ← You provide this
+### Step 2: EDA & Feature Engineering
+
+Open and run the notebook:
+
+```bash
+jupyter notebook Project1_Section3_Section4_Final.ipynb
 ```
 
-**Final panel:** ~910 rows (5 boroughs × 182 days) with 40+ columns.
+The notebook reads `Daily Borough Events Panel.csv` and performs:
 
-## Pipeline Steps
+#### Section 3 — Data Validation & Overview
+- Dataset structure and panel completeness checks
+- Auto-generated data dictionary (types, missingness, summary stats)
+- Column grouping into semantic categories (IDs, weather, structural, time, lags, Top-K)
 
-### Part 1 — Data Collection
+#### Section 4 — Exploratory Data Analysis
 
-1. **311 Complaints:** Paginated download from Socrata API (50k records/request), filtered to Jan–Jun 2024, excluding "Unspecified" boroughs.
-2. **Weather:** Hourly observations from Open-Meteo Archive API for NYC coordinates.
-3. **Events:** Three sources merged — BeautifulSoup scraping of nyctourism.com, NYC Open Data permitted events API, and manually curated holidays/parades. Citywide events are expanded to all five boroughs.
-4. **Census:** ACS 2019 5-year estimates for population and median household income, aggregated from ZIP to borough level.
-5. **Airbnb:** Kaggle dataset aggregated to borough-level metrics (listing count, price, rating, reviews, entire-home percentage).
+| Subsection | Content |
+|------------|---------|
+| 4.1 Descriptive Overview | Summary statistics, missingness patterns, citywide anomaly detection (robust Z-score using median + MAD) |
+| 4.2 Spatial Patterns | Distributions and outliers by borough (histograms, box/violin plots), complaint composition (Top-K stacked bars and heatmap) |
+| 4.3 Temporal Dynamics | Daily time series by borough, 7-day rolling trends, monthly aggregation, day-of-week and weekend effects |
+| 4.4 Event & Weather Effects | Event-day vs. non-event comparison, temperature and precipitation scatter plots with regression |
+| 4.5 Correlation Diagnostics | Correlation heatmap, VIF multicollinearity check, influence diagnostics (studentized residuals, leverage, Cook's distance, DFFITS), PCA visualization |
 
-### Part 2 — Panel Construction
+#### Section 5 — Feature Engineering
 
-- Aggregate 311 records to daily × borough counts (total + top-8 complaint types)
-- Aggregate weather from hourly to daily (mean/max/min temperature, precipitation sum, wind, cloud cover, snowfall)
-- Merge all sources: 311 + weather (by date), census + Airbnb (by borough), events (by date + borough)
-- Engineer features: day-of-week, weekend flag, month, week-of-year, 1-day lags, 7-day rolling means, log-transformed complaint count, Airbnb density per 1,000 residents
+| Subsection | Features Created |
+|------------|-----------------|
+| 5.1 Time & Calendar | Cyclical sin/cos encodings for day-of-week and month, weekend indicator, time index |
+| 5.2 Lag & Rolling | 1-day and 7-day lagged complaints, 7-day rolling weather means, short-term momentum (day-over-day change) |
+| 5.3 Weather Regime | Log-precipitation, precipitation binary flag, weather regime indicators (hot/cold/rainy), temperature bins |
+| 5.4 Complaint Composition | Lagged top-type shares, Herfindahl concentration index, complaint diversity (unique types count) |
+| 5.5 Interactions | Weekend × weather, event × precipitation, borough × temperature cross-terms |
+| 5.6 Missing Value Handling | Two versions: EDA-friendly (forward + backward fill) and time-safe (forward-fill only, no future leakage) |
+| 5.7 Model Matrix Construction | One-hot encoding, zero-variance filtering, four scaling variants (raw, standardized, min-max, Yeo–Johnson power) |
 
-### Part 3 — Data Quality & Preprocessing
+## Output Files
 
-- **Missing value analysis:** Column-level missingness count and percentage
-- **Validation:** Borough consistency, date completeness, numeric range checks, duplicate detection
-- **Outlier handling:** IQR method on 6 key variables; winsorize weather outliers (precipitation, wind, snowfall) while preserving complaint spikes
-- **Imputation:** Forward-fill + median for lag/rolling features; zero-fill for precipitation; median for remaining numerics
+### From `data_acquisition_cleaning_preprocessing.py`
+
+| File | Description |
+|------|-------------|
+| `data/raw/nyc_311_raw.csv` | Raw 311 complaint records |
+| `data/raw/weather_raw.csv` | Raw hourly weather data |
+| `data/raw/census_demographics_raw.csv` | Census ZIP-level demographics |
+| `Daily Borough Events Panel.csv` | Cleaned daily × borough panel |
+
+### From `Project1_Section3_Section4_Final.ipynb`
+
+| File | Description |
+|------|-------------|
+| `*_processed.csv` | EDA-friendly imputed dataset |
+| `*_processed_time_safe.csv` | Time-safe imputed dataset (no future leakage) |
+| `*_model_matrix_A.csv` | Model matrix after variance filtering |
+| `*_model_matrix_A_standard.csv` | Standardized (z-score) variant |
+| `*_model_matrix_A_minmax.csv` | Min-max scaled variant |
+| `*_model_matrix_A_power.csv` | Yeo–Johnson power-transformed variant |
+| `outputs_task3_task4/figures/` | All EDA figures in PNG and PDF |
+| `outputs_task3_task4/tables/` | All summary tables in CSV, LaTeX, and PNG |
 
 ## Key Variables in Final Panel
 
@@ -108,16 +159,22 @@ Estimated runtime: **30–40 minutes** (mostly 311 API download).
 | `complaints_total` | Daily complaint count |
 | `topk_*_cnt` | Counts for top-8 complaint types |
 | `temp_mean`, `temp_max`, `temp_min` | Daily temperature (°C) |
-| `precipitation_sum`, `snowfall_sum` | Daily precipitation/snowfall (mm/cm) |
+| `precipitation_sum`, `snowfall_sum` | Daily precipitation / snowfall |
 | `wind_speed_mean`, `cloud_cover_mean` | Daily wind and cloud cover |
 | `census_income_borough_median` | Borough median household income |
 | `census_population_borough_sum` | Borough total population |
 | `airbnb_listing_count`, `airbnb_price_mean` | Borough Airbnb metrics |
-| `airbnb_per_1000_people_borough` | Airbnb density |
+| `airbnb_per_1000_people_borough` | Airbnb density per 1,000 residents |
 | `event_count`, `event_has_parade`, `event_has_holiday` | Event indicators |
 | `day_of_week`, `is_weekend`, `month` | Calendar features |
 | `*_lag1`, `*_ma7` | Lag and rolling-window features |
-| `log_complaints_total` | Log-transformed target |
+| `log_complaints_total` | Log-transformed target variable |
+
+## Environment Compatibility
+
+The pipeline auto-detects the runtime environment:
+- **Google Colab** → uses `/content/` as base directory
+- **Local machine** → uses the script's directory as base
 
 ## GitHub Repository
 
