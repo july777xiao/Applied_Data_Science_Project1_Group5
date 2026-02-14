@@ -124,12 +124,3 @@ The notebook reads the panel CSV and performs two major phases:
 3. **Borough Differences** — Are complaint rate differences driven by population, income, or housing density?
 4. **Event Effects** — Are event days associated with significant changes in complaint volumes?
 5. **Predictive Features** — Which engineered features best predict daily complaint counts?
-
-## Environment Compatibility
-
-The pipeline auto-detects the runtime environment:
-- **Google Colab** → uses `/content/` as the base directory
-- **Local machine** → uses the script's parent directory as the base
-
-
-
