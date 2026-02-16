@@ -10,7 +10,7 @@ Ketaki Dabade (kvd2112) · Junye Chen (jc6636) · Rui Lin (rl3445) · Xiao Xiao 
 
 This project fulfills the requirements of **Project 1: Data Acquisition, Cleaning, Preprocessing and Feature Engineering for Exploratory Analysis**. The objective is to acquire data from multiple sources, perform data cleaning and EDA, engineer meaningful features, and produce a well-documented report summarizing findings and methodology.
 
-New York City's 311 system is the primary channel through which residents report non-emergency issues such as noise complaints, illegal parking, heating failures, and unsanitary conditions. We analyze 311 complaints from January through June 2024 by integrating five heterogeneous data sources into a unified **daily × borough** panel dataset (~910 rows, 40+ variables), investigating how weather, public events, demographics, and housing markets drive complaint volumes across the five boroughs.
+New York City's 311 system is the primary channel through which residents report non-emergency issues such as noise complaints, illegal parking, heating failures, and unsanitary conditions. We analyze 311 complaints from January through June 2024 by integrating five heterogeneous data sources into a unified **daily × borough** panel dataset (~840 rows, 40+ variables), investigating how weather, public events, demographics, and housing markets drive complaint volumes across the five boroughs.
 
 ## Project Requirements Mapping
 
